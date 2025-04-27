@@ -40,7 +40,24 @@ Mat parallelBlurThreads(const Mat& input, int num_threads = 4) {
                 output.at<Vec3b>(y, x) = sum / 9;
             }
         }
-    }
+    };
+}
+
+void atomicExample() {
+    std::atomic<int> counter_atomic{0};
+    int counter_mutex = 0;
+    std::mutex mtx;
+
+    auto incrementAtomic = [&]() {
+        for (int i = 0; i < 1000000; ++i) counter_atomic++;
+    };
+
+    auto incrementMutex = [&]() {
+        for (int i = 0; i < 1000000; ++i) {
+            std::lock_guard<std::mutex> lock(mtx);
+            counter_mutex++;
+        }
+    };
 }
 
 int main() {
@@ -66,4 +83,7 @@ int main() {
     diff = end - start;
     std::cout << "Parallel blur time: " << diff.count() << "s\n";
     imwrite("images/output_par.jpg", output_par);
+
+    atomicExample();
+    return 0;
 }
