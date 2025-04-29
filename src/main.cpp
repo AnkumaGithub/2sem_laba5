@@ -9,29 +9,25 @@ using namespace cv;
 
 Mat sequentialBlur(const Mat& input) {
     Mat output = input.clone();
-    // Убедимся, что изображение достаточно большое
+    // проверка размера
     if (input.rows < 3 || input.cols < 3) {
         std::cerr << "Image is too small for 3x3 blur" << std::endl;
         return output;
     }
 
-    for (int y = 1; y < input.rows - 1; y++) {
-        for (int x = 1; x < input.cols - 1; x++) {
-            Vec3i sum(0, 0, 0); // Используем int для избежания переполнения
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dx = -1; dx <= 1; dx++) {
+    for (int y = 1; y < input.rows - 1; y+=1) {
+        for (int x = 1; x < input.cols - 1; x+=1) {
+            Vec3i sum(0, 0, 0); // Используем int для суммы так как может быть переполнение
+            for (int dy = -1; dy <= 1; dy+=1) {
+                for (int dx = -1; dx <= 1; dx+=1) {
                     Vec3b pixel = input.at<Vec3b>(y + dy, x + dx);
-                    sum[0] += pixel[0]; // Суммируем как целые числа
+                    sum[0] += pixel[0];
                     sum[1] += pixel[1];
                     sum[2] += pixel[2];
                 }
             }
-            // Округление: (sum + n/2) / n
-            output.at<Vec3b>(y, x) = Vec3b(
-                (sum[0] + 4) / 9,
-                (sum[1] + 4) / 9,
-                (sum[2] + 4) / 9
-            );
+            // Округление +4 до целого
+            output.at<Vec3b>(y, x) = Vec3b( (sum[0] + 4) / 9, (sum[1] + 4) / 9, (sum[2] + 4) / 9);
         }
     }
     return output;
@@ -43,32 +39,27 @@ Mat parallelBlurThreads(const Mat& input, int num_threads = 4) {
     int strip_height = input.rows / num_threads;
 
     auto processStrip = [&](int start_y, int end_y) {
-        // Корректировка границ, чтобы обработать ВСЕ внутренние пиксели
         start_y = std::max(1, start_y);
-        end_y = std::min(input.rows - 1, end_y); // Обрабатываем до rows-1 (включительно)
-        for (int y = start_y; y < end_y; y++) {  // y < end_y → обрабатываем [start_y, end_y-1]
-            for (int x = 1; x < input.cols - 1; x++) {
-                Vec3i sum(0, 0, 0); // Используем int для суммы
-                for (int dy = -1; dy <= 1; dy++) {
-                    for (int dx = -1; dx <= 1; dx++) {
+        end_y = std::min(input.rows - 1, end_y);
+        for (int y = start_y; y < end_y; y+=1) {
+            for (int x = 1; x < input.cols - 1; x+=1) {
+                Vec3i sum(0, 0, 0); // Используем int для суммы так как может быть переполнение
+                for (int dy = -1; dy <= 1; dy+=1) {
+                    for (int dx = -1; dx <= 1; dx+=1) {
                         Vec3b pixel = input.at<Vec3b>(y + dy, x + dx);
                         sum[0] += pixel[0];
                         sum[1] += pixel[1];
                         sum[2] += pixel[2];
                     }
                 }
-                // Округление как в sequentialBlur
-                output.at<Vec3b>(y, x) = Vec3b(
-                    (sum[0] + 4) / 9,
-                    (sum[1] + 4) / 9,
-                    (sum[2] + 4) / 9
-                );
+                // Округление +4 до целого
+                output.at<Vec3b>(y, x) = Vec3b( (sum[0] + 4) / 9, (sum[1] + 4) / 9, (sum[2] + 4) / 9);
             }
         }
     };
 
-    // Запуск потоков с корректными границами
-    for (int i = 0; i < num_threads; ++i) {
+    // Запуск потков
+    for (int i = 0; i < num_threads; i+=1) {
         int start_y = i * strip_height;
         int end_y = (i == num_threads - 1) ? input.rows : (i + 1) * strip_height;
         threads.emplace_back(processStrip, start_y, end_y);
@@ -82,21 +73,50 @@ Mat parallelBlurThreads(const Mat& input, int num_threads = 4) {
     return output;
 }
 
-void atomicExample() {
+void atomic_mutex(int num_threads = 4, int iterations = 1000000) {
     std::atomic<int> counter_atomic{0};
     int counter_mutex = 0;
     std::mutex mtx;
 
-    auto incrementAtomic = [&]() {
-        for (int i = 0; i < 1000000; i+=1) counter_atomic++;
+    // Функция для atomic
+    auto Atomic = [&]() {
+        for (int i = 0; i < iterations; i+=1) {
+            counter_atomic++;
+        }
     };
 
-    auto incrementMutex = [&]() {
-        for (int i = 0; i < 1000000; i+=1) {
+    // Функция для мьютекса
+    auto Mutex = [&]() {
+        for (int i = 0; i < iterations; i+=1) {
             std::lock_guard<std::mutex> lock(mtx);
             counter_mutex++;
         }
     };
+    // atomic
+    auto start = std::chrono::high_resolution_clock::now();
+    std::vector<std::thread> threads;
+    for (int i = 0; i < num_threads; i+=1) {
+        threads.emplace_back(Atomic);
+    }
+    for (auto& t : threads) { // не даём работать main
+        t.join();
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end - start;
+    std::cout << "Atomic time: " << diff.count() << "s, Result: " << counter_atomic << std::endl;
+
+    // мьютекс
+    threads.clear();
+    start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < num_threads; i+=1) {
+        threads.emplace_back(Mutex);
+    }
+    for (auto& t : threads) { // не даём работать main
+        t.join();
+    }
+    end = std::chrono::high_resolution_clock::now();
+    diff = end - start;
+    std::cout << "Mutex time: " << diff.count() << "s, Result: " << counter_mutex << std::endl;
 }
 
 int main() {
@@ -122,8 +142,8 @@ int main() {
     diff = end - start;
     std::cout << "parallelBlurThreads time: " << diff.count() << "s\n";
     imwrite("/Users/maksimkuznetsov/CLionProjects/2sem_laba5/images/output_par.jpg", output_par);
-    // атомарные
-    atomicExample();
+    // атомарные и мьютекс
+    atomic_mutex();
 
     return 0;
 }
